@@ -1,0 +1,272 @@
+---
+title: "Untitled"
+author: "Angela Threadgill"
+date: "10/1/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# load necessary libraries
+library(tidyverse)
+library(ggridges)
+```
+
+```{r}
+# read data from GitHub
+# https://fred.stlouisfed.org/series/CASANF0POP
+# https://fred.stlouisfed.org/series/MHICA06075A052NCEN
+# https://fred.stlouisfed.org/series/USACP040100GPM
+# https://fred.stlouisfed.org/series/QUSN628BIS
+
+rent_df <- 
+  readr::read_csv(
+    file = "https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-07-05/rent.csv"
+  ) %>% 
+  dplyr::select(
+    -c(date, address, lat, lon, descr, details)
+  ) %>% 
+  dplyr::filter(
+    county != "napa"
+  )
+
+new_constr_df <- 
+  readr::read_csv(
+    file = "https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-07-05/new_construction.csv"
+  ) %>% 
+  dplyr::select(
+    -c(starts_with("the_geom"), source)
+  )
+
+files_list <- list.files(path = "data/")
+
+income_df <-
+  purrr::map2_dfr(
+    .x = files_list[grepl(x = files_list, "income")],
+    .y = rent_df %>% dplyr::filter(!is.na(county)) %>% distinct(county) %>% arrange(county) %>% pull(county),
+    .f = ~ readr::read_csv(
+      file = glue::glue("data/{.x}")
+    ) %>% 
+      dplyr::mutate(
+        county = .y
+      )
+  ) %>% 
+  dplyr::rename_all(
+    tolower
+  ) %>% dplyr::mutate(
+    year = lubridate::year(as.Date(date)),
+    income = as.numeric(income)
+  ) %>% 
+  dplyr::select(
+    -date
+  ) %>% 
+  dplyr::filter(
+    year >= 2000
+  )
+```
+
+We notice that the counties in the `rent_df` dataset are all lowercase and do not have the word "county" appended to them.
+
+```{r}
+rent_df %>% 
+  dplyr::distinct(
+    county
+  )
+```
+Additionally, we notice that the counties in `new_cunstr_df` are title case with the word "county" appended. To match these allowable values with that of `rent_df`, we can convert to lowercase and remove the word "county". We also observe that `rent_df` contains Santa Cruz and a null county while `new_constr_df` does not.
+
+```{r}
+new_constr_df %>% 
+  dplyr::distinct(
+    county
+  )
+```
+
+Let's go ahead and use `tolower()` and `stringr::str_remove_all()` on `county` in `new_constr_df`.
+
+```{r}
+new_constr_clean_df <-
+  new_constr_df %>% 
+  dplyr::mutate(
+    county = tolower(stringr::str_remove_all(county, "County"))
+  )
+
+new_constr_clean_df
+```
+We observe 1,394 entries with null counties. Given these comprise of 0.7% of the `rent_df` dataset, let's go ahead and filter those out.
+
+```{r}
+rent_df %>% 
+  dplyr::count(
+    county
+  )
+```
+
+```{r}
+rent_clean_df <-
+  rent_df %>% 
+  dplyr::filter(
+    !is.na(county)
+  )
+```
+
+
+Now, let's check if `rent_clean_df` is distinct by `post_id`. Let's also check if it's distinct by `title`, since individuals can create duplicate posts for the same apartment.
+
+```{r}
+rent_clean_df %>% 
+  dplyr::summarise(
+    n = n(),
+    n_dist = n_distinct(post_id)
+  )
+
+rent_clean_df %>% 
+  dplyr::summarise(
+    n = n(),
+    n_dist = n_distinct(title)
+  )
+```
+
+We notice that `rent_clean_df` is distinct by `post_id`, but **not** by `title`.
+
+```{r}
+dup_titles <-
+  rent_clean_df %>% 
+  dplyr::count(
+    title
+  ) %>% 
+  dplyr::filter(
+    n > 1
+  ) %>% 
+  dplyr::pull(
+    title
+  )
+```
+
+We notice that there are ~25,000 entries that have duplicate titles. However, after some research, it looks as though certain individuals are posting the same title, but for a different unit. Here, a "different unit" is identified as the same title, but in a different neighborhood/county and with a different price and square footage.
+
+```{r}
+dup_df <-
+  rent_clean_df %>% 
+  dplyr::filter(
+    title %in% dup_titles
+  )
+
+dup_df %>% 
+  dplyr::count(
+    nhood,
+    county, 
+    title,
+    price,
+    sqft
+  ) %>% 
+  dplyr::filter(
+    n > 1
+  )
+```
+
+```{r}
+rent_clean_df <-
+  rent_clean_df %>% 
+  dplyr::distinct(
+    nhood,
+    county, 
+    title,
+    price,
+    sqft,
+    .keep_all = TRUE
+  )
+```
+
+```{r}
+rent_clean_df %>% 
+  dplyr::group_by(
+    year,
+    county
+  ) %>% 
+  dplyr::summarise(
+    avg_rent = mean(price, na.rm = TRUE)
+  ) %>% 
+  ggplot(
+    aes(x = year, y = avg_rent, color = county)
+  ) +
+  geom_line() +
+  theme_minimal()
+```
+
+```{r}
+income_df %>% 
+  ggplot(
+    aes(x = year, y = income, color = county)
+  ) +
+  geom_line() +
+  theme_minimal()
+```
+
+```{r}
+avg_rent_df <-
+  rent_clean_df %>% 
+  dplyr::group_by(
+    year,
+    county
+  ) %>% 
+  dplyr::summarise(
+    avg_rent = mean(price, na.rm = TRUE)
+  )
+
+avg_rent_df %>% 
+  dplyr::inner_join(
+    income_df,
+    by = c("year", "county")
+  ) %>% 
+  dplyr::mutate(
+    mth_income = income / 12,
+    affordability = mth_income / avg_rent
+  ) %>% 
+  ggplot(
+    aes(x = year, y = affordability, color = county)
+  ) +
+  geom_line() +
+  theme_minimal() +
+  geom_hline(
+    yintercept = 3
+  )
+```
+
+```{r}
+# maybe pivot longer and plot both the income and rental price distributions
+rent_clean_df %>%
+  ggplot() +
+  geom_density(
+    aes(x = price, color = county)
+  ) +
+  scale_x_log10() +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    axis.title = element_blank(),
+    axis.text.y = element_blank()
+  ) +
+  labs(
+    title = "Distribution of rental prices across counties in the Bay Area"
+  )
+# 
+# rent_clean_df %>%
+#   ggplot() +
+#   geom_density_ridges(
+#     aes(x = price, y = county)
+#   ) +
+#   scale_x_log10() +
+#   theme_minimal() +
+#   theme(
+#     panel.grid.major = element_blank(),
+#     axis.title = element_blank(),
+#     axis.text.y = element_blank()
+#   )
+```
+
+```{r}
+# maybe a metric like the proportion of years that a county is considered unafforadable under the affordability metric in this analysis
+```
+
