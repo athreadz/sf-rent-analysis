@@ -339,7 +339,7 @@ rent_pop_df <-
     year
   ) %>% 
   dplyr::summarise(
-    avg_price = mean(price, na.rm = TRUE)
+    avg_price = median(price, na.rm = TRUE)
   ) %>% 
   dplyr::ungroup() %>% 
   dplyr::inner_join(
@@ -455,7 +455,7 @@ main_df <-
     county
   ) %>% 
   dplyr::summarise(
-    avg_rent = mean(price, na.rm = TRUE)
+    avg_rent = median(price, na.rm = TRUE)
   ) %>% 
   dplyr::inner_join(
     income_df,
@@ -500,7 +500,21 @@ main_df %>%
 ```
 
 ```{r}
-main_df2 <- main_df %>% dplyr::filter(county == "san francisco")
+main_df2 <- 
+  main_df %>% 
+  dplyr::filter(county == "san francisco") %>% 
+  dplyr::select(
+    year,
+    county,
+    population,
+    affordability
+  ) %>% 
+  dplyr::group_by(
+    county
+  ) %>% 
+  dplyr::mutate(
+    yoy_population = (population - lag(population)) / lag(population)
+  )
 
 model1 = vars::VAR(main_df2[c("affordability"," population")], p = 2)
 summary(model1)
