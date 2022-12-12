@@ -1,42 +1,22 @@
 ---
-title: "Untitled"
+title: "Exploratory data analysis (EDA)"
 author: "Angela Threadgill"
-date: "10/1/2022"
+date: "`r Sys.Date()`"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-
-# load necessary libraries
+```{r}
 library(tidyverse)
-library(ggridges)
+library(vars)
 ```
 
 ```{r}
-# read data from GitHub
-# https://fred.stlouisfed.org/series/CASANF0POP
-# https://fred.stlouisfed.org/series/MHICA06075A052NCEN
-# https://fred.stlouisfed.org/series/USACP040100GPM
-# https://fred.stlouisfed.org/series/QUSN628BIS
-
 rent_df <- 
   readr::read_csv(
     file = "https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-07-05/rent.csv"
   ) %>% 
   dplyr::select(
-    -c(date, address, lat, lon, descr, details)
-  ) %>% 
-  dplyr::filter(
-    county != "napa"
-  )
-
-new_constr_df <- 
-  readr::read_csv(
-    file = "https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-07-05/new_construction.csv"
-  ) %>% 
-  dplyr::select(
-    -c(starts_with("the_geom"), source)
+    -c(date, address, lat, lon, descr, details, city, baths, room_in_apt)
   )
 
 files_list <- list.files(path = "data/")
@@ -44,7 +24,7 @@ files_list <- list.files(path = "data/")
 income_df <-
   purrr::map2_dfr(
     .x = files_list[grepl(x = files_list, "income")],
-    .y = rent_df %>% dplyr::filter(!is.na(county)) %>% distinct(county) %>% arrange(county) %>% pull(county),
+    .y = rent_df %>% dplyr::filter(!is.na(county), county != "napa") %>% distinct(county) %>% arrange(county) %>% pull(county),
     .f = ~ readr::read_csv(
       file = glue::glue("data/{.x}")
     ) %>% 
@@ -64,158 +44,418 @@ income_df <-
   dplyr::filter(
     year >= 2000
   )
-```
 
-We notice that the counties in the `rent_df` dataset are all lowercase and do not have the word "county" appended to them.
-
-```{r}
-rent_df %>% 
-  dplyr::distinct(
-    county
+pop_df <-
+  purrr::map2_dfr(
+    .x = files_list[grepl(x = files_list, "pop")],
+    .y = rent_df %>% dplyr::filter(!is.na(county), county != "napa") %>% distinct(county) %>% arrange(county) %>% pull(county),
+    .f = ~ readr::read_csv(
+      file = glue::glue("data/{.x}")
+    ) %>% 
+      dplyr::mutate(
+        county = .y
+      )
+  ) %>% 
+  dplyr::rename_all(
+    tolower
+  ) %>% dplyr::mutate(
+    year = lubridate::year(as.Date(date)),
+    population = as.numeric(population)
+  ) %>% 
+  dplyr::select(
+    -date
+  ) %>% 
+  dplyr::filter(
+    year >= 2000
   )
-```
-Additionally, we notice that the counties in `new_cunstr_df` are title case with the word "county" appended. To match these allowable values with that of `rent_df`, we can convert to lowercase and remove the word "county". We also observe that `rent_df` contains Santa Cruz and a null county while `new_constr_df` does not.
 
-```{r}
-new_constr_df %>% 
-  dplyr::distinct(
-    county
-  )
-```
-
-Let's go ahead and use `tolower()` and `stringr::str_remove_all()` on `county` in `new_constr_df`.
-
-```{r}
-new_constr_clean_df <-
-  new_constr_df %>% 
+# https://fred.stlouisfed.org/series/CPIAUCSL
+cpi_df <-
+  data.table::fread(
+    file = "data/us-cpi.csv"
+  ) %>% 
+  janitor::clean_names(
+    case = "snake"
+  ) %>% 
   dplyr::mutate(
-    county = tolower(stringr::str_remove_all(county, "County"))
+    year = lubridate::year(date)
+  ) %>% 
+  dplyr::group_by(
+    year
+  ) %>% 
+  dplyr::summarise(
+    cpi = mean(cpiaucsl)
+  ) %>% 
+  dplyr::filter(
+    year >= 2000,
+    year <= 2018
   )
-
-new_constr_clean_df
 ```
-We observe 1,394 entries with null counties. Given these comprise of 0.7% of the `rent_df` dataset, let's go ahead and filter those out.
 
-```{r}
-rent_df %>% 
-  dplyr::count(
-    county
-  )
-```
+## Data munging
 
 ```{r}
 rent_clean_df <-
   rent_df %>% 
   dplyr::filter(
     !is.na(county)
-  )
-```
-
-
-Now, let's check if `rent_clean_df` is distinct by `post_id`. Let's also check if it's distinct by `title`, since individuals can create duplicate posts for the same apartment.
-
-```{r}
-rent_clean_df %>% 
-  dplyr::summarise(
-    n = n(),
-    n_dist = n_distinct(post_id)
-  )
-
-rent_clean_df %>% 
-  dplyr::summarise(
-    n = n(),
-    n_dist = n_distinct(title)
-  )
-```
-
-We notice that `rent_clean_df` is distinct by `post_id`, but **not** by `title`.
-
-```{r}
-dup_titles <-
-  rent_clean_df %>% 
-  dplyr::count(
-    title
   ) %>% 
-  dplyr::filter(
-    n > 1
-  ) %>% 
-  dplyr::pull(
-    title
-  )
-```
-
-We notice that there are ~25,000 entries that have duplicate titles. However, after some research, it looks as though certain individuals are posting the same title, but for a different unit. Here, a "different unit" is identified as the same title, but in a different neighborhood/county and with a different price and square footage.
-
-```{r}
-dup_df <-
-  rent_clean_df %>% 
-  dplyr::filter(
-    title %in% dup_titles
-  )
-
-dup_df %>% 
-  dplyr::count(
-    nhood,
-    county, 
-    title,
-    price,
-    sqft
-  ) %>% 
-  dplyr::filter(
-    n > 1
-  )
-```
-
-```{r}
-rent_clean_df <-
-  rent_clean_df %>% 
   dplyr::distinct(
     nhood,
     county, 
     title,
     price,
+    beds,
     sqft,
     .keep_all = TRUE
   )
 ```
 
+## EDA
+
 ```{r}
 rent_clean_df %>% 
-  dplyr::group_by(
+  dplyr::count(
+    year
+  ) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::mutate(
+    prop = n / sum(n)
+  ) %>% 
+  ggplot(
+    aes(x = year, y = prop)
+  ) +
+  geom_col(
+    fill = "#5a7572"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.title = element_blank()
+  ) +
+  labs(
+    title = "% of total Craigslist rental postings in the Bay Area from 2000 - 2018"
+  ) +
+  scale_y_continuous(
+    labels = scales::percent
+  )
+```
+
+```{r}
+rent_clean_df %>% 
+  dplyr::count(
+    county
+  ) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::mutate(
+    prop = n / sum(n)
+  ) %>% 
+  ggplot(
+    aes(x = county, y = prop)
+  ) +
+  geom_col(
+    fill = "#5a7572"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.title = element_blank()
+  ) +
+  labs(
+    title = "% of total Craigslist rental postings in the Bay Area from 2000 - 2018"
+  ) +
+  scale_y_continuous(
+    labels = scales::percent
+  )
+```
+
+```{r}
+rent_clean_df %>% 
+  dplyr::count(
     year,
     county
   ) %>% 
-  dplyr::summarise(
-    avg_rent = mean(price, na.rm = TRUE)
+  dplyr::ungroup() %>% 
+  dplyr::group_by(
+    county
+  ) %>% 
+  dplyr::mutate(
+    prop = n / sum(n)
   ) %>% 
   ggplot(
-    aes(x = year, y = avg_rent, color = county)
+    aes(x = year, y = prop)
   ) +
-  geom_line() +
-  theme_minimal()
+  geom_col(
+    fill = "#5a7572"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.title = element_blank(),
+    strip.text = element_text(face = "bold")
+  ) +
+  labs(
+    title = "% of total Craigslist rental postings in the Bay Area from 2000 - 2018 by county"
+  ) +
+  scale_y_continuous(
+    labels = scales::percent
+  ) +
+  facet_wrap(
+    . ~ county
+  )
 ```
 
-```{r}
-income_df %>% 
-  ggplot(
-    aes(x = year, y = income, color = county)
-  ) +
-  geom_line() +
-  theme_minimal()
-```
+When observing the underlying data, we find that 2000 - 2002 overall contain low volume and that Santa Cruz and Solano have multiple years where the are less than 50 rental postings. Given concerns around sufficient data for statistical inference and analysis within these counties and years, I am removing these counties from the analysis.
 
 ```{r}
-avg_rent_df <-
+rent_clean_df2 <-
   rent_clean_df %>% 
+  dplyr::filter(
+    !(county %in% c("santa cruz", "solano", "napa")),
+    !(year %in% 2000:2002)
+  )
+```
+
+This results in a 7% reduction in the dataset after having already data munged. The final record count is 183,872.
+
+```{r}
+rent_clean_df2 %>% 
+  dplyr::select(
+    post_id,
+    price,
+    beds,
+    sqft
+  ) %>% 
+  tidyr::pivot_longer(
+    cols = c(price, beds, sqft)
+  ) %>% 
+  ggplot(
+    aes(x = value, color = name)
+  ) +
+  geom_boxplot() +
+  coord_flip() +
+  theme_minimal() +
+  scale_x_log10() +
+  theme(
+    legend.position = "top",
+    legend.justification = "left",
+    legend.title = element_blank()
+  )
+```
+
+From the view above and table below, we can see that the data for each post does not seem unreasonably large or small. Given this, we can drop `beds` and `sqft` from the analysis since we no longer need them going forward.
+
+```{r}
+summary(rent_clean_df2)
+```
+
+```{r}
+rent_clean_df3 <-
+  rent_clean_df2 %>% 
+  dplyr::select(
+    -c(beds, sqft)
+  )
+```
+
+```{r}
+rent_clean_df3 %>% 
+  ggplot(
+    aes(x = price, color = county)
+  ) +
+  geom_density() +
+  theme_minimal() +
+  scale_x_log10() +
+  labs(
+    title = "Distribution of rental prices from 2003-2018 by county"
+  ) +
+  facet_wrap(
+    . ~ year
+  ) +
+  theme(
+    axis.text = element_blank(),
+    axis.title = element_blank()
+  )
+```
+
+From the visual above, we see that the distribution of rental prices by county begins to diverge after the financial crisis, especiall in years 2011 onward.
+
+```{r}
+rent_cpi_df <-
+  rent_clean_df3 %>% 
   dplyr::group_by(
-    year,
-    county
+    county, year
   ) %>% 
   dplyr::summarise(
-    avg_rent = mean(price, na.rm = TRUE)
+    avg_price = median(price, na.rm = TRUE)
+  ) %>% 
+  dplyr::inner_join(
+    cpi_df,
+    by = "year"
+  ) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::group_by(
+    county
+  ) %>% 
+  dplyr::mutate(
+    `Rental price index` = (avg_price / avg_price[1L]) * 100,
+    cpi = (cpi / cpi[1L]) * 100
+  ) %>% 
+  dplyr::select(
+    -avg_price
+  ) %>% 
+  dplyr::rename(
+    CPI = cpi
+  ) %>% 
+  tidyr::pivot_longer(
+    cols = c(`Rental price index`, CPI)
+  ) 
+
+rent_cpi_df %>% 
+  ggplot(
+    aes(x = year, y = value, color = name)
+  ) +
+  geom_line() +
+  facet_wrap(
+    . ~ county
+  ) +
+  theme_minimal() +
+  scale_color_brewer(
+    palette = "Set2"
+  ) +
+  theme(
+    legend.position = "top",
+    legend.justification = "left",
+    legend.title = element_blank(),
+    axis.title = element_blank(),
+    panel.grid.major = element_blank()
+  ) +
+  labs(
+    title = "Rent price index and U.S. CPI overtime"
+  )
+```
+
+```{r}
+rent_pop_df <-
+  rent_clean_df3 %>% 
+  dplyr::group_by(
+    county, 
+    year
+  ) %>% 
+  dplyr::summarise(
+    avg_price = mean(price, na.rm = TRUE)
+  ) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::inner_join(
+    pop_df,
+    by = c("county", "year")
+  ) %>% 
+  dplyr::group_by(
+    county
+  ) %>% 
+  dplyr::mutate(
+    `YoY change in rent price` = (avg_price - lag(avg_price)) / lag(avg_price),
+    `YoY change in population` = (population - lag(population)) / lag(population)
+  ) %>% 
+  tidyr::pivot_longer(
+    cols = c(`YoY change in population`)
   )
 
-avg_rent_df %>% 
+rent_pop_df %>% 
+  dplyr::filter(
+    !is.na(value)
+  ) %>% 
+  ggplot(
+    aes(x = year, y = value, color = name)
+  ) +
+  geom_line() +
+  facet_wrap(
+    . ~ county
+  ) +
+  theme_minimal() +
+  scale_color_brewer(
+    palette = "Set2"
+  ) +
+  theme(
+    legend.position = "none",
+    axis.title = element_blank(),
+    panel.grid.major = element_blank()
+  ) +
+  scale_y_continuous(
+    labels = scales::percent
+  ) +
+  labs(
+    title = "Year-over-year change in population across time"
+  )
+```
+```{r}
+rent_cpi_df2 <-
+  rent_clean_df3 %>% 
+  dplyr::group_by(
+    county, year
+  ) %>% 
+  dplyr::summarise(
+    avg_price = median(price, na.rm = TRUE)
+  ) %>% 
+  dplyr::inner_join(
+    cpi_df,
+    by = "year"
+  ) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::group_by(
+    county
+  ) %>% 
+  dplyr::mutate(
+    cpi = (cpi / cpi[1L])
+  ) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::mutate(
+    inf_adj_price = avg_price / cpi
+  ) %>% 
+  dplyr::group_by(
+    county
+  ) %>% 
+  dplyr::mutate(
+    yoy_price = (inf_adj_price - lag(inf_adj_price)) / lag(inf_adj_price)
+  ) %>% 
+  tidyr::pivot_longer(
+    cols = c(yoy_price)
+  )
+
+rent_cpi_df2 %>% 
+  dplyr::filter(
+    !is.na(value)
+  ) %>% 
+  ggplot(
+    aes(x = year, y = value, color = name)
+  ) +
+  geom_line() +
+  facet_wrap(
+    . ~ county
+  ) +
+  theme_minimal() +
+  scale_color_brewer(
+    palette = "Set2"
+  ) +
+  theme(
+    #legend.position = "none",
+    axis.title = element_blank(),
+    panel.grid.major = element_blank()
+  ) +
+  scale_y_continuous(
+    labels = scales::percent
+  ) +
+  labs(
+    title = "Year-over-year change in inflation-adjusted median rental price across time"
+  )
+```
+
+```{r}
+main_df <-
+  rent_clean_df3 %>% 
+  dplyr::group_by(
+    year,
+    county
+  ) %>% 
+  dplyr::summarise(
+    avg_rent = mean(price, na.rm = TRUE)
+  ) %>% 
   dplyr::inner_join(
     income_df,
     by = c("year", "county")
@@ -224,6 +464,19 @@ avg_rent_df %>%
     mth_income = income / 12,
     affordability = mth_income / avg_rent
   ) %>% 
+  dplyr::inner_join(
+    pop_df,
+    by = c("year", "county")
+  ) %>% 
+  dplyr::inner_join(
+    cpi_df,
+    by = c("year")
+  )
+
+main_df %>% 
+  dplyr::filter(
+    county == "san francisco"
+  ) %>% 
   ggplot(
     aes(x = year, y = affordability, color = county)
   ) +
@@ -231,42 +484,24 @@ avg_rent_df %>%
   theme_minimal() +
   geom_hline(
     yintercept = 3
-  )
-```
-
-```{r}
-# maybe pivot longer and plot both the income and rental price distributions
-rent_clean_df %>%
-  ggplot() +
-  geom_density(
-    aes(x = price, color = county)
   ) +
-  scale_x_log10() +
-  theme_minimal() +
+  scale_color_brewer(
+    palette = "Set2"
+  ) +
   theme(
-    panel.grid.major = element_blank(),
-    axis.title = element_blank(),
-    axis.text.y = element_blank()
+    legend.position = "none",
+    axis.title = element_blank()
   ) +
   labs(
-    title = "Distribution of rental prices across counties in the Bay Area"
+    title = "Affordability metric across time",
+    subtitle = "San Francisco county"
   )
-# 
-# rent_clean_df %>%
-#   ggplot() +
-#   geom_density_ridges(
-#     aes(x = price, y = county)
-#   ) +
-#   scale_x_log10() +
-#   theme_minimal() +
-#   theme(
-#     panel.grid.major = element_blank(),
-#     axis.title = element_blank(),
-#     axis.text.y = element_blank()
-#   )
 ```
 
 ```{r}
-# maybe a metric like the proportion of years that a county is considered unafforadable under the affordability metric in this analysis
+main_df2 <- main_df %>% dplyr::filter(county == "san francisco")
+
+model1 = vars::VAR(main_df2[c("affordability"," population")], p = 2)
+summary(model1)
 ```
 
