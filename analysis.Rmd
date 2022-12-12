@@ -24,7 +24,7 @@ files_list <- list.files(path = "data/")
 income_df <-
   purrr::map2_dfr(
     .x = files_list[grepl(x = files_list, "income")],
-    .y = rent_df %>% dplyr::filter(!is.na(county), county != "napa") %>% distinct(county) %>% arrange(county) %>% pull(county),
+    .y = rent_df %>% dplyr::filter(!is.na(county), !(county %in% c("santa cruz", "solano", "napa"))) %>% distinct(county) %>% arrange(county) %>% pull(county),
     .f = ~ readr::read_csv(
       file = glue::glue("data/{.x}")
     ) %>% 
@@ -48,7 +48,7 @@ income_df <-
 pop_df <-
   purrr::map2_dfr(
     .x = files_list[grepl(x = files_list, "pop")],
-    .y = rent_df %>% dplyr::filter(!is.na(county), county != "napa") %>% distinct(county) %>% arrange(county) %>% pull(county),
+    .y = rent_df %>% dplyr::filter(!is.na(county), !(county %in% c("santa cruz", "solano", "napa"))) %>% distinct(county) %>% arrange(county) %>% pull(county),
     .f = ~ readr::read_csv(
       file = glue::glue("data/{.x}")
     ) %>% 
@@ -69,7 +69,6 @@ pop_df <-
     year >= 2000
   )
 
-# https://fred.stlouisfed.org/series/CPIAUCSL
 cpi_df <-
   data.table::fread(
     file = "data/us-cpi.csv"
@@ -283,7 +282,7 @@ rent_cpi_df <-
     county, year
   ) %>% 
   dplyr::summarise(
-    avg_price = median(price, na.rm = TRUE)
+    med_price = median(price, na.rm = TRUE)
   ) %>% 
   dplyr::inner_join(
     cpi_df,
@@ -294,11 +293,11 @@ rent_cpi_df <-
     county
   ) %>% 
   dplyr::mutate(
-    `Rental price index` = (avg_price / avg_price[1L]) * 100,
+    `Rental price index` = (med_price / med_price[1L]) * 100,
     cpi = (cpi / cpi[1L]) * 100
   ) %>% 
   dplyr::select(
-    -avg_price
+    -med_price
   ) %>% 
   dplyr::rename(
     CPI = cpi
@@ -339,7 +338,7 @@ rent_pop_df <-
     year
   ) %>% 
   dplyr::summarise(
-    avg_price = median(price, na.rm = TRUE)
+    med_price = median(price, na.rm = TRUE)
   ) %>% 
   dplyr::ungroup() %>% 
   dplyr::inner_join(
@@ -350,7 +349,7 @@ rent_pop_df <-
     county
   ) %>% 
   dplyr::mutate(
-    `YoY change in rent price` = (avg_price - lag(avg_price)) / lag(avg_price),
+    `YoY change in rent price` = (med_price - lag(med_price)) / lag(med_price),
     `YoY change in population` = (population - lag(population)) / lag(population)
   ) %>% 
   tidyr::pivot_longer(
@@ -391,7 +390,7 @@ rent_cpi_df2 <-
     county, year
   ) %>% 
   dplyr::summarise(
-    avg_price = median(price, na.rm = TRUE)
+    med_price = median(price, na.rm = TRUE)
   ) %>% 
   dplyr::inner_join(
     cpi_df,
@@ -406,7 +405,7 @@ rent_cpi_df2 <-
   ) %>% 
   dplyr::ungroup() %>% 
   dplyr::mutate(
-    inf_adj_price = avg_price / cpi
+    inf_adj_price = med_price / cpi
   ) %>% 
   dplyr::group_by(
     county
@@ -434,7 +433,7 @@ rent_cpi_df2 %>%
     palette = "Set2"
   ) +
   theme(
-    #legend.position = "none",
+    legend.position = "none",
     axis.title = element_blank(),
     panel.grid.major = element_blank()
   ) +
@@ -508,14 +507,8 @@ main_df2 <-
     county,
     population,
     affordability
-  ) %>% 
-  dplyr::group_by(
-    county
-  ) %>% 
-  dplyr::mutate(
-    yoy_population = (population - lag(population)) / lag(population)
   )
 
-model1 = vars::VAR(main_df2[c("affordability"," population")], p = 2)
+model1 <- vars::VAR(main_df2[c("affordability","population")], p = 2)
 summary(model1)
 ```
