@@ -1,5 +1,5 @@
 ---
-title: "Exploratory data analysis (EDA)"
+title: "Exploratory data analysis & modeling"
 author: "Angela Threadgill"
 date: "`r Sys.Date()`"
 output: html_document
@@ -111,7 +111,7 @@ rent_clean_df <-
   )
 ```
 
-## EDA
+## Exploratory data analysis
 
 ```{r}
 rent_clean_df %>% 
@@ -445,6 +445,7 @@ rent_cpi_df2 %>%
     title = "Year-over-year change in inflation-adjusted median rental price across time"
   )
 ```
+## Modeling
 
 ```{r}
 main_df <-
@@ -504,4 +505,3 @@ main_df2 <- main_df %>% dplyr::filter(county == "san francisco")
 model1 = vars::VAR(main_df2[c("affordability"," population")], p = 2)
 summary(model1)
 ```
-
